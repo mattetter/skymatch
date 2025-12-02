@@ -77,6 +77,27 @@
             border-color: #667eea;
         }
         
+        .forecast-btn {
+            padding: 8px 20px;
+            border: 2px solid #667eea;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .forecast-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .forecast-btn:active {
+            transform: translateY(0);
+        }
+        
         .match-buttons {
             display: flex;
             gap: 10px;
@@ -243,6 +264,7 @@
                 <select id="dateSelect">
                     <option value="">Loading dates...</option>
                 </select>
+                <button id="forecastBtn" class="forecast-btn">📡 Today's Forecast</button>
             </div>
             
             <div id="matchButtons" class="match-buttons">
@@ -280,6 +302,7 @@
         let currentMatches = [];
         let currentTarget = null;
         let scatterData = [];
+        let isForecastMode = false;
         
         // Load available dates
         fetch('/api/dates')
@@ -308,8 +331,47 @@
             const date = e.target.value;
             if (!date) return;
             
+            isForecastMode = false;
             currentTarget = date;
             loadMatches(date);
+        });
+        
+        // Handle forecast button
+        document.getElementById('forecastBtn').addEventListener('click', function() {
+            isForecastMode = true;
+            currentTarget = 'forecast';
+            
+            const loading = document.getElementById('skewt-loading');
+            const img = document.getElementById('skewt-image');
+            
+            loading.textContent = 'Fetching current forecast from NOAA...';
+            loading.style.display = 'block';
+            img.style.display = 'none';
+            
+            document.getElementById('dateSelect').value = '';
+            
+            // Fetch forecast and get matches
+            fetch('/api/fetch_forecast')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        return fetch('/api/forecast_matches');
+                    } else {
+                        throw new Error(data.error || 'Failed to fetch forecast');
+                    }
+                })
+                .then(r => r.json())
+                .then(matches => {
+                    currentMatches = matches;
+                    renderMatchButtons();
+                    if (matches.length > 0) {
+                        selectMatch(0);
+                    }
+                })
+                .catch(err => {
+                    loading.textContent = 'Error: ' + err.message;
+                    console.error('Forecast error:', err);
+                });
         });
         
         function loadMatches(date) {
@@ -374,9 +436,19 @@
             const category = categorizeDay(match.num_pilots, match.max_distance);
             const info = document.getElementById('info-content');
             
-            info.innerHTML = `
+            const targetInfo = isForecastMode ? 
+                `<div class="info-row">
+                    <span class="info-label">Mode:</span>
+                    <span class="info-value" style="color: #667eea; font-weight: 600;">Today's Forecast</span>
+                </div>` :
+                `<div class="info-row">
+                    <span class="info-label">Target Date:</span>
+                    <span class="info-value">${currentTarget}</span>
+                </div>`;
+            
+            info.innerHTML = targetInfo + `
                 <div class="info-row">
-                    <span class="info-label">Date:</span>
+                    <span class="info-label">Best Match:</span>
                     <span class="info-value">${match.date}</span>
                 </div>
                 <div class="info-row">
@@ -384,7 +456,7 @@
                     <span class="info-value">${match.score.toFixed(1)}</span>
                 </div>
                 <div class="info-row">
-                    <span class="info-label">Pilots:</span>
+                    <span class="info-label">Pilots (that day):</span>
                     <span class="info-value">${match.num_pilots}</span>
                 </div>
                 <div class="info-row">
