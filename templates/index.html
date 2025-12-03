@@ -338,6 +338,14 @@
                     const date = new Date(d.date);
                     return date.getMonth() === targetMonth && date.getFullYear() === targetYear;
                 });
+                
+                // Always include highlighted date even if outside current month
+                if (highlightDate && !filteredData.some(d => d.date === highlightDate)) {
+                    const highlightedPoint = data.find(d => d.date === highlightDate);
+                    if (highlightedPoint) {
+                        filteredData.push(highlightedPoint);
+                    }
+                }
             }
 
             const maxX = Math.max(...filteredData.map(d => d.max_distance), 100);
