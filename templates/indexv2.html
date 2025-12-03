@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkyMatch</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .controls {
+            padding: 20px 30px;
+            background: #f8f9fa;
+            border-bottom: 2px solid #e9ecef;
+        }
+        
+        .controls-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        
+        label {
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        select {
+            padding: 8px 15px;
+            border: 2px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 1em;
+            cursor: pointer;
+            background: white;
+            transition: border-color 0.3s;
+        }
+        
+        select:hover {
+            border-color: #667eea;
+        }
+        
+        .forecast-btn {
+            padding: 8px 20px;
+            border: 2px solid #667eea;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .forecast-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        /* Similarity Controls */
+        .similarity-controls {
+            background: #fff;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .similarity-controls h4 {
+            margin-bottom: 12px;
+            color: #495057;
+            font-size: 0.95em;
+        }
+        
+        .weight-sliders {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+        }
+        
+        .weight-slider {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .weight-slider label {
+            font-size: 0.85em;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .weight-slider input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+        }
+        
+        .altitude-filter {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #e9ecef;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .altitude-filter label {
+            font-size: 0.85em;
+        }
+        
+        .altitude-filter select {
+            padding: 4px 10px;
+            font-size: 0.9em;
+        }
+        
+        .apply-btn {
+            padding: 6px 16px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        
+        .apply-btn:hover {
+            background: #5a6fd6;
+        }
+
+        .scatter-tooltip {
+            position: absolute;
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 0.85em;
+            pointer-events: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            display: none;
+        }
+        
+        /* Scented Widgets - Mini Skew-T Sparklines */
+        .sparkline-container {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding: 10px 0;
+        }
+        
+        .sparkline-card {
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            padding: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: white;
+            width: 120px;
+            text-align: center;
+        }
+        
+        .sparkline-card:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        .sparkline-card.active {
+            border-color: #667eea;
+            background: linear-gradient(135deg, #667eea10 0%, #764ba210 100%);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+        
+        .sparkline-card svg {
+            display: block;
+            margin: 0 auto 6px;
+        }
+        
+        .sparkline-date {
+            font-size: 0.75em;
+            color: #495057;
+            font-weight: 600;
+        }
+        
+        .sparkline-score {
+            font-size: 0.65em;
+            color: #6c757d;
+        }
+        
+        .sparkline-category {
+            font-size: 0.6em;
+            padding: 2px 6px;
+            border-radius: 8px;
+            margin-top: 4px;
+            display: inline-block;
+        }
+        
+        .content {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            padding: 30px;
+        }
+        
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .skewt-container {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+        
+        .skewt-container img {
+            max-width: 100%;
+            height: 100%;
+            border-radius: 4px;
+        }
+        
+        .loading {
+            padding: 60px;
+            text-align: center;
+            color: #6c757d;
+            font-style: italic;
+        }
+        
+        .scatter-container {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        
+        .scatter-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #212529;
+        }
+        
+        .scatter-legend {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+            font-size: 0.85em;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .info-panel {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        
+        .info-panel h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        .info-value {
+            color: #212529;
+            font-weight: 500;
+        }
+        
+        .category-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        
+        /* Category colors */
+        .category-weak { background: #ffeaa7; color: #d68910; }
+        .category-pleasant { background: #74b9ff; color: #0984e3; }
+        .category-hero { background: #a29bfe; color: #6c5ce7; }
+        .category-epic { background: #fd79a8; color: #c0392b; }
+        
+        .axis-label {
+            font-size: 12px;
+            fill: #495057;
+        }
+        
+        @media (max-width: 1200px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="scatter-tooltip" id="scatter-tooltip"></div>
+    <div class="container">
+        <header>
+            <h1>☁️ SkyMatch</h1>
+            <div class="subtitle">Match todays weather to previous flying conditions</div>
+        </header>
+        
+        <div class="controls">
+            <div class="controls-row">
+                <label for="dateSelect">Select a day to analyze:</label>
+                <select id="dateSelect">
+                    <option value="">Loading dates...</option>
+                </select>
+                <button id="forecastBtn" class="forecast-btn">Today's Forecast</button>
+            </div>
+            
+            
+            <!-- Scented Widgets - Mini Skew-T Sparklines (Point 2) -->
+            <div id="sparklineContainer" class="sparkline-container">
+                <p style="color: #6c757d; font-style: italic;">Select a date to see similar days as sparklines</p>
+            </div>
+        </div>
+        
+        <div class="content">
+            <div class="skewt-container">
+                <div class="loading" id="skewt-loading">
+                    Select a date above to see the comparison
+                </div>
+                <img id="skewt-image" style="display:none;" />
+            </div>
+            
+            <div class="scatter-container">
+                <div class="scatter-title">Historical Flights - Day Categories</div>
+                <div class="scatter-legend">
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background: #d68910;"></div>
+                        <span>Weak</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background: #0984e3;"></div>
+                        <span>Pleasant</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background: #6c5ce7;"></div>
+                        <span>Hero</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background: #c0392b;"></div>
+                        <span>Epic</span>
+                    </div>
+                </div>
+                <svg id="scatter-plot" width="100%" height="400"></svg>
+            </div>
+        </div>
+
+                <!-- Similarity Controls (Point 3 & 4) -->
+        <div class="similarity-controls">
+            <h4>Similarity Weights & Filters</h4>
+            <div class="weight-sliders">
+                <div class="weight-slider">
+                    <label>Temperature <span id="tempWeightVal">1.5</span></label>
+                    <input type="range" id="tempWeight" min="0" max="3" step="0.1" value="1.5">
+                </div>
+                <div class="weight-slider">
+                    <label>Dewpoint <span id="dewWeightVal">1.0</span></label>
+                    <input type="range" id="dewWeight" min="0" max="3" step="0.1" value="1.0">
+                </div>
+                <div class="weight-slider">
+                    <label>Wind Direction<span id="uWindWeightVal">0.8</span></label>
+                    <input type="range" id="uWindWeight" min="0" max="3" step="0.1" value="0.8">
+                </div>
+                <div class="weight-slider">
+                    <label>Wind Velocity <span id="vWindWeightVal">0.8</span></label>
+                    <input type="range" id="vWindWeight" min="0" max="3" step="0.1" value="0.8">
+                </div>
+            </div>
+            <div class="altitude-filter">
+                <label>Max Altitude:</label>
+                <select id="altitudeFilter">
+                    <option value="400">All (to 400 hPa / ~24,000 ft)</option>
+                    <option value="500">500 hPa (~18,000 ft)</option>
+                    <option value="600">600 hPa (~14,000 ft)</option>
+                    <option value="700">700 hPa (~10,000 ft)</option>
+                </select>
+                <button class="apply-btn" id="applyWeights">Apply & Refresh</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let currentMatches = [];
+        let currentTarget = null;
+        let scatterData = [];
+        let isForecastMode = false;
+        let targetSoundingData = null;  // Store target sounding for sparklines
+        
+        // Category colors for scatter plot (Point 5)
+        const categoryColors = {
+            weak: '#d68910',
+            pleasant: '#0984e3',
+            hero: '#6c5ce7',
+            epic: '#c0392b'
+        };
+        
+        // Load available dates
+        fetch('/api/dates')
+            .then(r => r.json())
+            .then(dates => {
+                const select = document.getElementById('dateSelect');
+                select.innerHTML = '<option value="">Choose a date...</option>';
+                dates.forEach(date => {
+                    const option = document.createElement('option');
+                    option.value = date;
+                    option.textContent = date;
+                    select.appendChild(option);
+                });
+            });
+        
+        // Load scatter plot data
+        fetch('/api/scatter_data')
+            .then(r => r.json())
+            .then(data => {
+                scatterData = data;
+                drawScatterPlot();
+            });
+        
+        // Weight slider value display
+        ['temp', 'dew', 'uWind', 'vWind'].forEach(id => {
+            const slider = document.getElementById(id + 'Weight');
+            const display = document.getElementById(id + 'WeightVal');
+            slider.addEventListener('input', () => {
+                display.textContent = slider.value;
+            });
+        });
+        
+        // Apply weights button
+        document.getElementById('applyWeights').addEventListener('click', () => {
+            if (currentTarget) {
+                if (isForecastMode) {
+                    loadForecastMatches();
+                } else {
+                    loadMatches(currentTarget);
+                }
+            }
+        });
+        
+        // Handle date selection
+        document.getElementById('dateSelect').addEventListener('change', function(e) {
+            const date = e.target.value;
+            if (!date) return;
+            
+            isForecastMode = false;
+            currentTarget = date;
+            loadMatches(date);
+        });
+        
+        // Handle forecast button
+        document.getElementById('forecastBtn').addEventListener('click', function() {
+            isForecastMode = true;
+            currentTarget = 'forecast';
+            
+            const loading = document.getElementById('skewt-loading');
+            const img = document.getElementById('skewt-image');
+            
+            loading.textContent = 'Fetching current forecast from NOAA...';
+            loading.style.display = 'block';
+            img.style.display = 'none';
+            
+            document.getElementById('dateSelect').value = '';
+            
+            loadForecastMatches();
+        });
+        
+        function loadForecastMatches() {
+            const loading = document.getElementById('skewt-loading');
+            loading.textContent = 'Fetching forecast and finding matches...';
+            
+            fetch('/api/fetch_forecast')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        return fetch(buildMatchUrl('/api/forecast_matches'));
+                    } else {
+                        throw new Error(data.error || 'Failed to fetch forecast');
+                    }
+                })
+                .then(r => r.json())
+                .then(matches => {
+                    currentMatches = matches;
+                    renderSparklines();
+                    if (matches.length > 0) {
+                        selectMatch(0);
+                    }
+                })
+                .catch(err => {
+                    loading.textContent = 'Error: ' + err.message;
+                    console.error('Forecast error:', err);
+                });
+        }
+        
+        function buildMatchUrl(baseUrl) {
+            const params = new URLSearchParams();
+            params.set('temp_weight', document.getElementById('tempWeight').value);
+            params.set('dew_weight', document.getElementById('dewWeight').value);
+            params.set('u_weight', document.getElementById('uWindWeight').value);
+            params.set('v_weight', document.getElementById('vWindWeight').value);
+            params.set('max_pressure', document.getElementById('altitudeFilter').value);
+            return baseUrl + '?' + params.toString();
+        }
+        
+        function loadMatches(date) {
+            fetch(buildMatchUrl(`/api/matches/${date}`))
+                .then(r => r.json())
+                .then(matches => {
+                    currentMatches = matches;
+                    renderSparklines();
+                    if (matches.length > 0) {
+                        selectMatch(0);
+                    }
+                });
+        }
+        
+        // Render mini Skew-T sparklines (Point 2 - Scented Widgets)
+        function renderSparklines() {
+            const container = document.getElementById('sparklineContainer');
+            container.innerHTML = '';
+            
+            currentMatches.forEach((match, idx) => {
+                const card = document.createElement('div');
+                card.className = 'sparkline-card' + (idx === 0 ? ' active' : '');
+                card.onclick = () => selectMatch(idx);
+                
+                // Create mini skew-t sparkline
+                const svg = createSparkline(match);
+                
+                const category = categorizeDay(match.num_pilots, match.max_distance);
+                
+                card.innerHTML = `
+                    <div class="sparkline-date">${match.date}</div>
+                    <div class="sparkline-score">Score: ${match.score.toFixed(1)}</div>
+                    <span class="sparkline-category category-${category.class}">${category.name}</span>
+                `;
+                card.insertBefore(svg, card.firstChild);
+                container.appendChild(card);
+            });
+        }
+        
+        // Create a mini skew-t sparkline SVG
+        function createSparkline(match) {
+            const width = 100;
+            const height = 60;
+            
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('width', width);
+            svg.setAttribute('height', height);
+            svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+            
+            // If we have sounding data for this match, draw it
+            if (match.sounding) {
+                const temps = match.sounding.temperature;
+                const dews = match.sounding.dewpoint;
+                const pressures = match.sounding.pressure;
+                
+                // Scale functions
+                const pMin = Math.min(...pressures);
+                const pMax = Math.max(...pressures);
+                const tMin = Math.min(...temps, ...dews);
+                const tMax = Math.max(...temps, ...dews);
+                
+                const xScale = (t) => ((t - tMin) / (tMax - tMin || 1)) * (width - 10) + 5;
+                const yScale = (p) => ((Math.log(p) - Math.log(pMax)) / (Math.log(pMin) - Math.log(pMax) || 1)) * (height - 10) + 5;
+                
+                // Temperature line (red)
+                let tempPath = 'M';
+                temps.forEach((t, i) => {
+                    const x = xScale(t);
+                    const y = yScale(pressures[i]);
+                    tempPath += `${i === 0 ? '' : 'L'}${x},${y} `;
+                });
+                
+                const tempLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                tempLine.setAttribute('d', tempPath);
+                tempLine.setAttribute('stroke', '#e74c3c');
+                tempLine.setAttribute('stroke-width', '2');
+                tempLine.setAttribute('fill', 'none');
+                svg.appendChild(tempLine);
+                
+                // Dewpoint line (green)
+                let dewPath = 'M';
+                dews.forEach((d, i) => {
+                    const x = xScale(d);
+                    const y = yScale(pressures[i]);
+                    dewPath += `${i === 0 ? '' : 'L'}${x},${y} `;
+                });
+                
+                const dewLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                dewLine.setAttribute('d', dewPath);
+                dewLine.setAttribute('stroke', '#27ae60');
+                dewLine.setAttribute('stroke-width', '2');
+                dewLine.setAttribute('fill', 'none');
+                svg.appendChild(dewLine);
+            } else {
+                // Placeholder if no data
+                const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text.setAttribute('x', width/2);
+                text.setAttribute('y', height/2);
+                text.setAttribute('text-anchor', 'middle');
+                text.setAttribute('font-size', '8');
+                text.setAttribute('fill', '#999');
+                text.textContent = 'Loading...';
+                svg.appendChild(text);
+            }
+            
+            return svg;
+        }
+        
+        function selectMatch(idx) {
+            // Update sparkline card states
+            document.querySelectorAll('.sparkline-card').forEach((card, i) => {
+                card.classList.toggle('active', i === idx);
+            });
+            
+            const match = currentMatches[idx];
+            
+            // Load comparison image
+            const loading = document.getElementById('skewt-loading');
+            const img = document.getElementById('skewt-image');
+            
+            loading.textContent = 'Generating comparison...';
+            loading.style.display = 'block';
+            img.style.display = 'none';
+            
+            fetch(`/api/comparison/${currentTarget}/${match.date}`)
+                .then(r => r.json())
+                .then(data => {
+                    img.src = 'data:image/png;base64,' + data.image;
+                    img.style.display = 'block';
+                    loading.style.display = 'none';
+                    
+                    updateScatterPlot(match.date);
+                });
+            
+            // Update info panel
+            updateInfoPanel(match);
+        }
+        
+        function updateInfoPanel(match) {
+            const category = categorizeDay(match.num_pilots, match.max_distance);
+            const info = document.getElementById('info-content');
+            
+            const targetInfo = isForecastMode ? 
+                `<div class="info-row">
+                    <span class="info-label">Mode:</span>
+                    <span class="info-value" style="color: #667eea; font-weight: 600;">Today's Forecast</span>
+                </div>` :
+                `<div class="info-row">
+                    <span class="info-label">Target Date:</span>
+                    <span class="info-value">${currentTarget}</span>
+                </div>`;
+            
+            info.innerHTML = targetInfo + `
+                <div class="info-row">
+                    <span class="info-label">Best Match:</span>
+                    <span class="info-value">${match.date}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Similarity Score:</span>
+                    <span class="info-value">${match.score.toFixed(1)}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Pilots (that day):</span>
+                    <span class="info-value">${match.num_pilots}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Longest Flight:</span>
+                    <span class="info-value">${match.max_distance.toFixed(1)} km</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Day Type:</span>
+                    <span class="info-value">
+                        <span class="category-badge category-${category.class}">${category.name}</span>
+                    </span>
+                </div>
+            `;
+        }
+        
+        function categorizeDay(pilots, distance) {
+            if (pilots < 5) {
+                if (distance < 50) return {name: 'Weak', class: 'weak'};
+                return {name: 'Hero', class: 'hero'};
+            } else {
+                if (distance < 50) return {name: 'Pleasant', class: 'pleasant'};
+                return {name: 'Epic', class: 'epic'};
+            }
+        }
+        
+        // Improved scatter plot with color-coded categories
+
+        function drawScatterPlot() {
+            console.log('=== drawScatterPlot called ===');
+            console.log('currentTarget:', currentTarget);
+            console.log('scatterData length:', scatterData.length);
+            const svg = d3.select('#scatter-plot');
+            const containerWidth = document.querySelector('.scatter-container').clientWidth - 40;
+            const width = containerWidth;
+            const height = 400;
+            const margin = {top: 20, right: 30, bottom: 60, left: 60};
+            
+            svg.attr('width', width).attr('height', height);
+            svg.selectAll('*').remove();
+            
+            const g = svg.append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+            
+            const plotWidth = width - margin.left - margin.right;
+            const plotHeight = height - margin.top - margin.bottom;
+
+            // ensure that only the current month is shown.
+            let filteredData = scatterData;
+            if (currentTarget && currentTarget !== 'forecast') {
+                const targetMonth = new Date(currentTarget).getMonth();
+                const targetYear = new Date(currentTarget).getFullYear();
+                filteredData = scatterData.filter(d => {
+                    const date = new Date(d.date);
+                    return date.getMonth() === targetMonth && date.getFullYear() === targetYear;
+                });
+                console.log('Filtered to', filteredData.length, 'days for month', targetMonth);
+
+
+            }
+
+            const xScale = d3.scaleLinear()
+                .domain([0, d3.max(filteredData, d => d.max_distance) * 1.1])
+                .range([0, plotWidth]);
+            
+            const yScale = d3.scaleLinear()
+                .domain([0, d3.max(filteredData, d => d.num_pilots) * 1.1])
+                .range([plotHeight, 0]);
+            
+            const zones = [
+                {x1: 0, y1: 0, x2: 50, y2: 5, color: categoryColors.weak, label: 'Weak'},
+                {x1: 50, y1: 0, x2: 200, y2: 5, color: categoryColors.hero, label: 'Hero'},
+                {x1: 0, y1: 5, x2: 50, y2: 50, color: categoryColors.pleasant, label: 'Pleasant'},
+                {x1: 50, y1: 5, x2: 200, y2: 50, color: categoryColors.epic, label: 'Epic'}
+            ];
+            
+            zones.forEach(zone => {
+                g.append('rect')
+                    .attr('x', xScale(zone.x1))
+                    .attr('y', yScale(zone.y2))
+                    .attr('width', xScale(zone.x2) - xScale(zone.x1))
+                    .attr('height', yScale(zone.y1) - yScale(zone.y2))
+                    .attr('fill', zone.color)
+                    .attr('opacity', 0.15);
+                
+                g.append('text')
+                    .attr('x', xScale((zone.x1 + zone.x2) / 2))
+                    .attr('y', yScale((zone.y1 + zone.y2) / 2))
+                    .attr('text-anchor', 'middle')
+                    .attr('font-size', '14px')
+                    .attr('fill', zone.color)
+                    .attr('font-weight', 'bold')
+                    .attr('opacity', 0.6)
+                    .text(zone.label);
+            });
+            
+            g.append('line')
+                .attr('x1', xScale(50))
+                .attr('x2', xScale(50))
+                .attr('y1', 0)
+                .attr('y2', plotHeight)
+                .attr('stroke', '#666')
+                .attr('stroke-width', 1)
+                .attr('stroke-dasharray', '4,4');
+            
+            g.append('line')
+                .attr('x1', 0)
+                .attr('x2', plotWidth)
+                .attr('y1', yScale(5))
+                .attr('y2', yScale(5))
+                .attr('stroke', '#666')
+                .attr('stroke-width', 1)
+                .attr('stroke-dasharray', '4,4');
+            
+            g.append('g')
+                .attr('transform', `translate(0,${plotHeight})`)
+                .call(d3.axisBottom(xScale));
+            
+            g.append('g')
+                .call(d3.axisLeft(yScale));
+            
+            g.append('text')
+                .attr('x', plotWidth / 2)
+                .attr('y', plotHeight + 45)
+                .attr('text-anchor', 'middle')
+                .attr('class', 'axis-label')
+                .text('Longest Flight Distance (km)');
+            
+            g.append('text')
+                .attr('transform', 'rotate(-90)')
+                .attr('x', -plotHeight / 2)
+                .attr('y', -45)
+                .attr('text-anchor', 'middle')
+                .attr('class', 'axis-label')
+                .text('Number of Pilots');
+            
+            g.selectAll('.dot')
+                .data(filteredData)
+                .enter()
+                .append('circle')
+                .attr('class', 'dot')
+                .attr('cx', d => xScale(d.max_distance))
+                .attr('cy', d => yScale(d.num_pilots))
+                .attr('r', 5)
+                .attr('fill', d => {
+                    const cat = categorizeDay(d.num_pilots, d.max_distance);
+                    return categoryColors[cat.class];
+                })
+                .attr('opacity', 0.7)
+                .attr('data-date', d => d.date)
+                .on('mouseover', function(event, d) {
+                    const cat = categorizeDay(d.num_pilots, d.max_distance);
+                    const tooltip = document.getElementById('scatter-tooltip');
+                    tooltip.innerHTML = `
+                        <strong>${d.date}</strong><br>
+                        Pilots: ${d.num_pilots}<br>
+                        Max Distance: ${d.max_distance.toFixed(1)} km<br>
+                        Type: <span class="category-badge category-${cat.class}">${cat.name}</span>
+                    `;
+                    tooltip.style.display = 'block';
+                    tooltip.style.left = (event.pageX + 10) + 'px';
+                    tooltip.style.top = (event.pageY - 10) + 'px';
+                })
+                .on('mouseout', function() {
+                    document.getElementById('scatter-tooltip').style.display = 'none';
+                });
+            
+            svg.xScale = xScale;
+            svg.yScale = yScale;
+        }
+        // Update scatter plot with highlighted point (Point 5 - size/saturation distinction)
+        function updateScatterPlot(highlightDate) {
+            const svg = d3.select('#scatter-plot');
+            const g = svg.select('g');
+            
+            // Reset all dots
+            g.selectAll('.dot')
+                .attr('r', 5)
+                .attr('opacity', 0.5)
+                .attr('stroke', 'none')
+                .attr('fill', d => {
+                    const cat = categorizeDay(d.num_pilots, d.max_distance);
+                    return categoryColors[cat.class];
+                });
+            
+            // Highlight selected - larger, full saturation, white stroke
+            g.selectAll('.dot')
+                .filter(d => d.date === highlightDate)
+                .attr('r', 12)
+                .attr('opacity', 1)
+                .attr('stroke', '#fff')
+                .attr('stroke-width', 3)
+                .raise();  // Bring to front
+        }
+        
+        // Responsive resize
+        window.addEventListener('resize', () => {
+            if (scatterData.length > 0) {
+                drawScatterPlot();
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,9 +1,9 @@
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, send_file
 import pandas as pd
 import numpy as np
 from datetime import datetime
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 from metpy.plots import SkewT
 from metpy.units import units
@@ -13,34 +13,24 @@ import base64
 from scipy.interpolate import interp1d
 from siphon.catalog import TDSCatalog
 import warnings
-import os
 
 app = Flask(__name__)
 
-# Hardcoded defaults (no longer configurable via UI)
-DEFAULTS = {
-    'weights': {
-        'temperature': 1.5,
-        'dewpoint': 1.0,
-        'u_wind': 0.8,
-        'v_wind': 0.8
-    },
-    'max_pressure': 400
-}
-
-# Standard pressure levels for comparison
-STANDARD_LEVELS = [1000, 975, 950, 925, 900, 875, 850, 825, 800, 775, 750, 700, 650, 600, 550, 500, 450, 400]
-
 # Load data on startup
+import os
 data_dir = os.path.dirname(os.path.abspath(__file__))
+
 soundings = pd.read_csv(os.path.join(data_dir, 'all_soundings_2024.csv'))
 soundings['date'] = pd.to_datetime(soundings['date'])
+
 flights = pd.read_csv(os.path.join(data_dir, 'xcontest_data.csv'))
 flights['date'] = pd.to_datetime(flights['date'])
 
 # Global variable for current forecast
 current_forecast = None
 
+# Standard pressure levels for comparison
+STANDARD_LEVELS = [1000, 975, 950, 925, 900, 875, 850, 825, 800, 775, 750, 700, 650, 600, 550, 500, 450, 400]
 
 def fetch_current_forecast():
     """Fetch today's GFS forecast for Denver and convert to match historical format"""
@@ -50,11 +40,13 @@ def fetch_current_forecast():
     longitude = -104.99
     
     try:
+        # Connect to catalog
         catalog_url = 'https://thredds.ucar.edu/thredds/catalog/grib/NCEP/GFS/Global_0p25deg/latest.xml'
         catalog = TDSCatalog(catalog_url)
         latest_ds = list(catalog.datasets.values())[0]
         ncss = latest_ds.subset()
         
+        # Query
         query = ncss.query()
         query.lonlat_point(longitude, latitude).accept('csv')
         query.variables('Geopotential_height_isobaric',
@@ -66,6 +58,7 @@ def fetch_current_forecast():
         data = ncss.get_data(query)
         df = pd.DataFrame(data)
         
+        # Rename columns
         df = df.rename(columns={
             'alt': 'pressure_Pa',
             'Geopotential_height_isobaric': 'height_m',
@@ -75,6 +68,7 @@ def fetch_current_forecast():
             'vcomponent_of_wind_isobaric': 'v_wind_ms'
         })
         
+        # Calculate dewpoint with warning suppression
         pressure_pa = df['pressure_Pa'].values * units.pascal
         temperature_k = df['temperature_K'].values * units.kelvin
         relative_humidity = df['relative_humidity_%'].values * units.percent
@@ -85,17 +79,20 @@ def fetch_current_forecast():
         
         df['dewpoint_K'] = dewpoint_k.to('kelvin').magnitude
         
+        # CONVERT TO MATCH HISTORICAL FORMAT
         df_converted = pd.DataFrame({
             'date': pd.Timestamp.now(),
-            'pressure': df['pressure_Pa'] / 100,
+            'pressure': df['pressure_Pa'] / 100,  # Pa to hPa
             'height': df['height_m'],
-            'temperature': df['temperature_K'] - 273.15,
-            'dewpoint': df['dewpoint_K'] - 273.15,
+            'temperature': df['temperature_K'] - 273.15,  # K to °C
+            'dewpoint': df['dewpoint_K'] - 273.15,  # K to °C
             'u_wind': df['u_wind_ms'],
             'v_wind': df['v_wind_ms']
         })
         
         df_converted = df_converted.sort_values('pressure', ascending=False).reset_index(drop=True)
+        
+        # Only keep pressure levels we care about
         df_converted = df_converted[
             (df_converted['pressure'] <= 1000) & 
             (df_converted['pressure'] >= 400)
@@ -108,7 +105,6 @@ def fetch_current_forecast():
         print(f"❌ Error fetching forecast: {e}")
         return None
 
-
 def interpolate_to_standard_levels(data, levels=None):
     """Interpolate sounding data to standard pressure levels"""
     if levels is None:
@@ -119,16 +115,18 @@ def interpolate_to_standard_levels(data, levels=None):
         valid = ~np.isnan(data[var].values)
         if valid.sum() < 2:
             return None
+            
         p_valid = data['pressure'].values[valid]
         var_valid = data[var].values[valid]
+        
         f = interp1d(p_valid, var_valid, kind='linear', 
                      bounds_error=False, fill_value='extrapolate')
         result[var] = f(levels)
     
     return pd.DataFrame(result)
 
-
-def calculate_similarity(date1, date2, is_forecast1=False, is_forecast2=False):
+def calculate_similarity(date1, date2, is_forecast1=False, is_forecast2=False, 
+                         weights=None, max_pressure=400):
     """Compare weather between two days, return distance score"""
     if is_forecast1:
         day1 = current_forecast.copy()
@@ -143,7 +141,8 @@ def calculate_similarity(date1, date2, is_forecast1=False, is_forecast2=False):
     if day1 is None or day2 is None or len(day1) == 0 or len(day2) == 0:
         return float('inf')
     
-    levels_to_use = [p for p in STANDARD_LEVELS if p >= DEFAULTS['max_pressure']]
+    # Filter by altitude (max_pressure - higher hPa = lower altitude)
+    levels_to_use = [p for p in STANDARD_LEVELS if p >= max_pressure]
     
     day1_std = interpolate_to_standard_levels(day1, levels_to_use)
     day2_std = interpolate_to_standard_levels(day2, levels_to_use)
@@ -151,8 +150,17 @@ def calculate_similarity(date1, date2, is_forecast1=False, is_forecast2=False):
     if day1_std is None or day2_std is None:
         return float('inf')
     
+    # Default weights if not provided
+    if weights is None:
+        weights = {
+            'temperature': 1.5,
+            'dewpoint': 1.0,
+            'u_wind': 0.8,
+            'v_wind': 0.8
+        }
+    
     total_distance = 0
-    for var, weight in DEFAULTS['weights'].items():
+    for var, weight in weights.items():
         if weight > 0:
             diff = day1_std[var].values - day2_std[var].values
             distance = np.sqrt(np.mean(diff**2))
@@ -160,68 +168,31 @@ def calculate_similarity(date1, date2, is_forecast1=False, is_forecast2=False):
     
     return total_distance
 
-
-def find_similar_days(target_date, n_matches=10, is_forecast=False):
+def find_similar_days(target_date, n_matches=10, is_forecast=False, 
+                      weights=None, max_pressure=400):
     """Find historical days similar to target date"""
     if not is_forecast:
         target_date = pd.Timestamp(target_date)
     
+    # Get all unique dates
     all_dates = soundings['date'].dt.date.unique()
     
+    # Exclude target date if it's not a forecast
     if not is_forecast:
         all_dates = [d for d in all_dates if d != target_date.date()]
     
+    # Calculate similarity for each
     similarities = []
     for date in all_dates:
-        score = calculate_similarity(
-            target_date if not is_forecast else None, 
-            date,
-            is_forecast1=is_forecast, 
-            is_forecast2=False
-        )
+        score = calculate_similarity(target_date if not is_forecast else None, date, 
+                                     is_forecast1=is_forecast, is_forecast2=False,
+                                     weights=weights, max_pressure=max_pressure)
         if not np.isinf(score):
             similarities.append((date, score))
     
+    # Sort and return top matches
     similarities.sort(key=lambda x: x[1])
     return similarities[:n_matches]
-
-
-def get_flight_data(match_date):
-    """Helper to get flight data for a date"""
-    flight_data = flights[flights['date'].dt.date == match_date]
-    if len(flight_data) > 0 and flight_data['flights'].values[0] >= 0:
-        return int(flight_data['flights'].values[0]), float(flight_data['max_distance'].values[0])
-    return 0, 0
-
-
-def get_sounding_data(match_date):
-    """Helper to get sampled sounding data for sparklines"""
-    match_sounding = soundings[soundings['date'].dt.date == match_date]
-    if len(match_sounding) > 0:
-        sampled = match_sounding.iloc[::3]
-        return {
-            'pressure': sampled['pressure'].tolist(),
-            'temperature': sampled['temperature'].tolist(),
-            'dewpoint': sampled['dewpoint'].tolist()
-        }
-    return None
-
-
-def build_match_result(matches):
-    """Build result list from matches"""
-    result = []
-    for match_date, score in matches:
-        num_pilots, max_distance = get_flight_data(match_date)
-        sounding_data = get_sounding_data(match_date)
-        result.append({
-            'date': str(match_date),
-            'score': float(score),
-            'num_pilots': num_pilots,
-            'max_distance': max_distance,
-            'sounding': sounding_data
-        })
-    return result
-
 
 def add_altitude_annotations(skew, day_data):
     """Add altitude annotations at key pressure levels"""
@@ -232,12 +203,12 @@ def add_altitude_annotations(skew, day_data):
                     bbox=dict(boxstyle='round,pad=0.3', 
                     facecolor='white', alpha=0.7, edgecolor='none'))
 
-
 def create_comparison_plot(target_date, match_date, is_forecast=False):
     """Create side-by-side Skew-T comparison plot"""
+    # Get data
     if is_forecast:
         target_data = current_forecast.copy()
-        target_label = "Today's Forecast"
+        target_label = f"Today's Forecast"
     else:
         target_data = soundings[soundings['date'].dt.date == pd.Timestamp(target_date).date()].copy()
         target_label = f'Target: {target_date}'
@@ -247,12 +218,16 @@ def create_comparison_plot(target_date, match_date, is_forecast=False):
     if target_data is None or len(target_data) == 0 or len(match_data) == 0:
         return None
     
-    similarity = calculate_similarity(target_date, match_date, is_forecast1=is_forecast, is_forecast2=False)
+    # Calculate similarity
+    similarity = calculate_similarity(target_date if not is_forecast else None, match_date,
+                                     is_forecast1=is_forecast, is_forecast2=False)
     
+    # Create figure with two subplots
     fig = plt.figure(figsize=(14, 8))
     
     # LEFT: Target date
     skew1 = SkewT(fig=fig, subplot=(1, 2, 1))
+    
     p1 = target_data['pressure'].values * units.hPa
     T1 = target_data['temperature'].values * units.degC
     Td1 = target_data['dewpoint'].values * units.degC
@@ -262,6 +237,7 @@ def create_comparison_plot(target_date, match_date, is_forecast=False):
     skew1.plot(p1, T1, 'r', linewidth=2, label='Temperature')
     skew1.plot(p1, Td1, 'g', linewidth=2, label='Dewpoint')
     skew1.plot_barbs(p1[::3], u1[::3], v1[::3])
+    
     skew1.ax.set_ylim(1000, 400)
     skew1.ax.set_xlim(-30, 40)
     add_altitude_annotations(skew1, target_data)
@@ -270,6 +246,7 @@ def create_comparison_plot(target_date, match_date, is_forecast=False):
     
     # RIGHT: Match date
     skew2 = SkewT(fig=fig, subplot=(1, 2, 2))
+    
     p2 = match_data['pressure'].values * units.hPa
     T2 = match_data['temperature'].values * units.degC
     Td2 = match_data['dewpoint'].values * units.degC
@@ -279,16 +256,21 @@ def create_comparison_plot(target_date, match_date, is_forecast=False):
     skew2.plot(p2, T2, 'r', linewidth=2, label='Temperature')
     skew2.plot(p2, Td2, 'g', linewidth=2, label='Dewpoint')
     skew2.plot_barbs(p2[::3], u2[::3], v2[::3])
+    
     skew2.ax.set_ylim(1000, 400)
+    # No lables on match graph so it fits on screen better. 
     skew2.ax.set_yticklabels([])
     skew2.ax.set_ylabel('')
     skew2.ax.set_xlim(-30, 40)
+
     add_altitude_annotations(skew2, match_data)
     skew2.ax.legend(loc='upper left')
-    skew2.ax.set_title(f'Match: {match_date} (Score: {similarity:.1f})', fontsize=12, fontweight='bold')
+    skew2.ax.set_title(f'Match: {match_date} (Score: {similarity:.1f})', 
+                      fontsize=12, fontweight='bold')
     
     plt.tight_layout()
     
+    # Convert to base64
     buf = BytesIO()
     plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
     buf.seek(0)
@@ -297,13 +279,9 @@ def create_comparison_plot(target_date, match_date, is_forecast=False):
     
     return img_base64
 
-
-# Routes
-
 @app.route('/')
 def index():
     return render_template('index.html')
-
 
 @app.route('/api/dates')
 def get_dates():
@@ -311,39 +289,57 @@ def get_dates():
     dates = sorted(soundings['date'].dt.date.unique())
     return jsonify([str(d) for d in dates])
 
-
 @app.route('/api/matches/<date>')
 def get_matches(date):
     """Get similar days for a given date"""
-    matches = find_similar_days(date, n_matches=10)
-    return jsonify(build_match_result(matches))
-
-
-@app.route('/api/forecast_matches')
-def get_forecast_matches():
-    """Get similar historical days for current forecast"""
-    global current_forecast
+    from flask import request
     
-    if current_forecast is None:
-        current_forecast = fetch_current_forecast()
-        if current_forecast is None:
-            return jsonify({'error': 'Could not fetch forecast'}), 500
+    # Parse weight parameters
+    weights = {
+        'temperature': float(request.args.get('temp_weight', 1.5)),
+        'dewpoint': float(request.args.get('dew_weight', 1.0)),
+        'u_wind': float(request.args.get('u_weight', 0.8)),
+        'v_wind': float(request.args.get('v_weight', 0.8))
+    }
+    max_pressure = int(request.args.get('max_pressure', 400))
     
-    matches = find_similar_days(None, n_matches=10, is_forecast=True)
-    return jsonify(build_match_result(matches))
-
-
-@app.route('/api/fetch_forecast')
-def api_fetch_forecast():
-    """Fetch current forecast from NOAA"""
-    global current_forecast
-    current_forecast = fetch_current_forecast()
+    matches = find_similar_days(date, n_matches=10, weights=weights, max_pressure=max_pressure)
     
-    if current_forecast is None:
-        return jsonify({'success': False, 'error': 'Could not fetch forecast'}), 500
+    result = []
+    for match_date, score in matches:
+        match_date_str = str(match_date)
+        
+        # Get flight data for this date
+        flight_data = flights[flights['date'].dt.date == match_date]
+        
+        if len(flight_data) > 0 and flight_data['flights'].values[0] >= 0:
+            num_pilots = int(flight_data['flights'].values[0])
+            max_distance = float(flight_data['max_distance'].values[0])
+        else:
+            num_pilots = 0
+            max_distance = 0
+        
+        # Get sounding data for sparkline (simplified for display)
+        match_sounding = soundings[soundings['date'].dt.date == match_date]
+        sounding_data = None
+        if len(match_sounding) > 0:
+            # Sample every few levels for sparkline
+            sampled = match_sounding.iloc[::3]
+            sounding_data = {
+                'pressure': sampled['pressure'].tolist(),
+                'temperature': sampled['temperature'].tolist(),
+                'dewpoint': sampled['dewpoint'].tolist()
+            }
+        
+        result.append({
+            'date': match_date_str,
+            'score': float(score),
+            'num_pilots': num_pilots,
+            'max_distance': max_distance,
+            'sounding': sounding_data
+        })
     
-    return jsonify({'success': True, 'message': f'Fetched {len(current_forecast)} levels'})
-
+    return jsonify(result)
 
 @app.route('/api/comparison/<target_date>/<match_date>')
 def get_comparison(target_date, match_date):
@@ -356,6 +352,74 @@ def get_comparison(target_date, match_date):
     
     return jsonify({'image': img})
 
+@app.route('/api/fetch_forecast')
+def api_fetch_forecast():
+    """Fetch current forecast from NOAA"""
+    global current_forecast
+    current_forecast = fetch_current_forecast()
+    
+    if current_forecast is None:
+        return jsonify({'success': False, 'error': 'Could not fetch forecast'}), 500
+    
+    return jsonify({'success': True, 'message': f'Fetched {len(current_forecast)} levels'})
+
+@app.route('/api/forecast_matches')
+def get_forecast_matches():
+    """Get similar historical days for current forecast"""
+    global current_forecast
+    from flask import request
+    
+    if current_forecast is None:
+        current_forecast = fetch_current_forecast()
+        if current_forecast is None:
+            return jsonify({'error': 'Could not fetch forecast'}), 500
+    
+    # Parse weight parameters
+    weights = {
+        'temperature': float(request.args.get('temp_weight', 1.5)),
+        'dewpoint': float(request.args.get('dew_weight', 1.0)),
+        'u_wind': float(request.args.get('u_weight', 0.8)),
+        'v_wind': float(request.args.get('v_weight', 0.8))
+    }
+    max_pressure = int(request.args.get('max_pressure', 400))
+    
+    matches = find_similar_days(None, n_matches=10, is_forecast=True, 
+                                weights=weights, max_pressure=max_pressure)
+    
+    result = []
+    for match_date, score in matches:
+        match_date_str = str(match_date)
+        
+        # Get flight data for this date
+        flight_data = flights[flights['date'].dt.date == match_date]
+        
+        if len(flight_data) > 0 and flight_data['flights'].values[0] >= 0:
+            num_pilots = int(flight_data['flights'].values[0])
+            max_distance = float(flight_data['max_distance'].values[0])
+        else:
+            num_pilots = 0
+            max_distance = 0
+        
+        # Get sounding data for sparkline
+        match_sounding = soundings[soundings['date'].dt.date == match_date]
+        sounding_data = None
+        if len(match_sounding) > 0:
+            sampled = match_sounding.iloc[::3]
+            sounding_data = {
+                'pressure': sampled['pressure'].tolist(),
+                'temperature': sampled['temperature'].tolist(),
+                'dewpoint': sampled['dewpoint'].tolist()
+            }
+        
+        result.append({
+            'date': match_date_str,
+            'score': float(score),
+            'num_pilots': num_pilots,
+            'max_distance': max_distance,
+            'sounding': sounding_data
+        })
+    
+    return jsonify(result)
 
 @app.route('/api/scatter_data')
 def get_scatter_data():
@@ -368,8 +432,8 @@ def get_scatter_data():
                 'num_pilots': int(row['flights']),
                 'max_distance': float(row['max_distance'])
             })
+    
     return jsonify(data)
-
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
