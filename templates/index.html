@@ -4,49 +4,111 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SkyMatch</title>
-    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
     <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
     <style>
-        /* Minimal custom CSS */
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 1rem 2rem;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        header {
+            margin-bottom: 1rem;
+        }
+        h1 {
+            margin: 0 0 0.25rem 0;
+        }
+        h3 {
+            margin: 0 0 0.5rem 0;
+        }
+        section {
+            margin-bottom: 1rem;
+        }
+        label {
+            margin-right: 0.5rem;
+        }
+        select, button {
+            padding: 0.5rem 1rem;
+            font-size: 1rem;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background: #2a2a2a;
+            color: #e0e0e0;
+            cursor: pointer;
+        }
+        button {
+            background: #0066cc;
+            border-color: #0066cc;
+            color: white;
+        }
+        button:hover {
+            background: #0055aa;
+        }
         .sparkline-row {
             display: flex;
-            gap: 10px;
+            gap: 6px;
             flex-wrap: wrap;
             margin: 1rem 0;
         }
         .sparkline-item {
             cursor: pointer;
-            padding: 8px;
-            border: 2px solid var(--border);
+            padding: 6px 8px;
+            border: 2px solid #444;
+            border-radius: 4px;
             text-align: center;
-            width: 120px;
+            width: 110px;
+            background: #2a2a2a;
+        }
+        .sparkline-item:hover {
+            border-color: #666;
         }
         .sparkline-item.selected {
-            border-color: var(--accent);
+            border-color: #0066cc;
         }
         .sparkline-item svg {
             display: block;
             margin: 0 auto 4px;
         }
         .sparkline-date {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: bold;
         }
         .sparkline-meta {
-            font-size: 0.7rem;
-            color: var(--text-light);
+            font-size: 0.65rem;
+            color: #888;
+        }
+        .side-by-side {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            width: 100%;
+        }
+        .side-by-side > div {
+            min-width: 0;
+        }
+        @media (max-width: 900px) {
+            .side-by-side {
+                grid-template-columns: 1fr;
+            }
         }
         #scatter-container {
             width: 100%;
             height: 400px;
         }
         #skewt-image {
-            max-width: 100%;
+            width: 100%;
+            height: 400px;
+            object-fit: contain;
+            border-radius: 4px;
         }
         .loading {
             padding: 2rem;
             text-align: center;
-            color: var(--text-light);
+            color: #888;
         }
     </style>
 </head>
@@ -71,14 +133,15 @@
             </div>
         </section>
 
-        <section>
-            <div id="skewt-loading" class="loading">Select a date above to see the comparison</div>
-            <img id="skewt-image" style="display:none;" alt="Skew-T comparison">
-        </section>
-
-        <section>
-            <h3>Historical Flights</h3>
-            <div id="scatter-container"></div>
+        <section class="side-by-side">
+            <div>
+                <div id="skewt-loading" class="loading">Select a date above to see the comparison</div>
+                <img id="skewt-image" style="display:none;" alt="Skew-T comparison">
+            </div>
+            <div>
+                <h3>Historical Flights</h3>
+                <div id="scatter-container"></div>
+            </div>
         </section>
     </main>
 
@@ -109,12 +172,14 @@
                 });
             });
 
-        // Load scatter plot data
+        // Load scatter plot data, then auto-load forecast
         fetch('/api/scatter_data')
             .then(r => r.json())
             .then(data => {
                 scatterData = data;
                 renderScatterPlot(data, null);
+                // Auto-load today's forecast
+                document.getElementById('forecastBtn').click();
             });
 
         // Date selection
@@ -189,14 +254,14 @@
                 item.appendChild(svg);
                 item.innerHTML += `
                     <div class="sparkline-date">${match.date}</div>
-                    <div class="sparkline-meta">Score: ${match.score.toFixed(1)} · ${category.name}</div>
+                    <div class="sparkline-meta">${category.name}</div>
                 `;
                 container.appendChild(item);
             });
         }
 
         function createSparkline(match) {
-            const width = 100, height = 50;
+            const width = 90, height = 50;
             const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
             svg.setAttribute('width', width);
             svg.setAttribute('height', height);
@@ -257,10 +322,18 @@
         function renderScatterPlot(data, highlightDate) {
             // Filter to current month if a target is selected
             let filteredData = data;
-            if (currentTarget && currentTarget !== 'forecast') {
-                const targetDate = new Date(currentTarget);
-                const targetMonth = targetDate.getMonth();
-                const targetYear = targetDate.getFullYear();
+            if (currentTarget) {
+                let targetMonth, targetYear;
+                if (currentTarget === 'forecast') {
+                    // For forecast, use current month but show 2024 data
+                    const now = new Date();
+                    targetMonth = now.getMonth();
+                    targetYear = 2024;
+                } else {
+                    const targetDate = new Date(currentTarget);
+                    targetMonth = targetDate.getMonth();
+                    targetYear = targetDate.getFullYear();
+                }
                 filteredData = data.filter(d => {
                     const date = new Date(d.date);
                     return date.getMonth() === targetMonth && date.getFullYear() === targetYear;
