@@ -1,0 +1,8 @@
+services:
+  skymatch:
+    build: .
+    container_name: skymatch
+    restart: unless-stopped
+    ports:
+      # localhost only; Caddy handles the public side, same as your other apps
+      - "127.0.0.1:8085:5000"

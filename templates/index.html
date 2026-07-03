@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkyMatch</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 1rem 2rem;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        header {
+            margin-bottom: 1rem;
+        }
+        h1 {
+            margin: 0 0 0.25rem 0;
+        }
+        h3 {
+            margin: 0 0 0.5rem 0;
+        }
+        section {
+            margin-bottom: 1rem;
+        }
+        label {
+            margin-right: 0.5rem;
+        }
+        select, button {
+            padding: 0.5rem 1rem;
+            font-size: 1rem;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background: #2a2a2a;
+            color: #e0e0e0;
+            cursor: pointer;
+        }
+        button {
+            background: #0066cc;
+            border-color: #0066cc;
+            color: white;
+        }
+        button:hover {
+            background: #0055aa;
+        }
+        .sparkline-row {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin: 1rem 0;
+        }
+        .sparkline-item {
+            cursor: pointer;
+            padding: 6px 8px;
+            border: 2px solid #444;
+            border-radius: 4px;
+            text-align: center;
+            width: 110px;
+            background: #2a2a2a;
+        }
+        .sparkline-item:hover {
+            border-color: #666;
+        }
+        .sparkline-item.selected {
+            border-color: #0066cc;
+        }
+        .sparkline-item svg {
+            display: block;
+            margin: 0 auto 4px;
+        }
+        .sparkline-date {
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+        .sparkline-meta {
+            font-size: 0.65rem;
+            color: #888;
+        }
+        .side-by-side {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            width: 100%;
+        }
+        .side-by-side > div {
+            min-width: 0;
+        }
+        @media (max-width: 900px) {
+            .side-by-side {
+                grid-template-columns: 1fr;
+            }
+        }
+        #scatter-container {
+            width: 100%;
+            height: 400px;
+        }
+        #skewt-image {
+            width: 100%;
+            height: 400px;
+            object-fit: contain;
+            border-radius: 4px;
+        }
+        .loading {
+            padding: 2rem;
+            text-align: center;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>☁️ SkyMatch</h1>
+        <p>Match today's weather to previous flying conditions</p>
+    </header>
+
+    <main>
+        <section>
+            <label for="dateSelect">Select a day to analyze:</label>
+            <select id="dateSelect">
+                <option value="">Loading dates...</option>
+            </select>
+            <button id="forecastBtn">Today's Forecast</button>
+        </section>
+
+        <section>
+            <div id="sparklineContainer" class="sparkline-row">
+                <p>Select a date to see similar days</p>
+            </div>
+        </section>
+
+        <section class="side-by-side">
+            <div>
+                <div id="skewt-loading" class="loading">Select a date above to see the comparison</div>
+                <img id="skewt-image" style="display:none;" alt="Skew-T comparison">
+            </div>
+            <div>
+                <h3>Historical Flights</h3>
+                <div id="scatter-container"></div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        let currentMatches = [];
+        let currentTarget = null;
+        let scatterData = [];
+        let isForecastMode = false;
+
+        const categoryColors = {
+            weak: '#d68910',
+            pleasant: '#0984e3',
+            hero: '#6c5ce7',
+            epic: '#c0392b'
+        };
+
+        // Load available dates
+        fetch('/api/dates')
+            .then(r => r.json())
+            .then(dates => {
+                const select = document.getElementById('dateSelect');
+                select.innerHTML = '<option value="">Choose a date...</option>';
+                dates.forEach(date => {
+                    const option = document.createElement('option');
+                    option.value = date;
+                    option.textContent = date;
+                    select.appendChild(option);
+                });
+            });
+
+        // Load scatter plot data, then auto-load forecast
+        fetch('/api/scatter_data')
+            .then(r => r.json())
+            .then(data => {
+                scatterData = data;
+                renderScatterPlot(data, null);
+                // Auto-load today's forecast
+                document.getElementById('forecastBtn').click();
+            });
+
+        // Date selection
+        document.getElementById('dateSelect').addEventListener('change', function(e) {
+            if (!e.target.value) return;
+            isForecastMode = false;
+            currentTarget = e.target.value;
+            loadMatches(currentTarget);
+        });
+
+        // Forecast button
+        document.getElementById('forecastBtn').addEventListener('click', function() {
+            isForecastMode = true;
+            currentTarget = 'forecast';
+            document.getElementById('dateSelect').value = '';
+            
+            const loading = document.getElementById('skewt-loading');
+            loading.textContent = 'Fetching current forecast from NOAA...';
+            loading.style.display = 'block';
+            document.getElementById('skewt-image').style.display = 'none';
+            
+            fetch('/api/fetch_forecast')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        return fetch('/api/forecast_matches');
+                    } else {
+                        throw new Error(data.error || 'Failed to fetch forecast');
+                    }
+                })
+                .then(r => r.json())
+                .then(matches => {
+                    currentMatches = matches;
+                    renderSparklines();
+                    if (matches.length > 0) selectMatch(0);
+                })
+                .catch(err => {
+                    loading.textContent = 'Error: ' + err.message;
+                });
+        });
+
+        function loadMatches(date) {
+            fetch(`/api/matches/${date}`)
+                .then(r => r.json())
+                .then(matches => {
+                    currentMatches = matches;
+                    renderSparklines();
+                    if (matches.length > 0) selectMatch(0);
+                });
+        }
+
+        function categorizeDay(pilots, distance) {
+            if (pilots < 5) {
+                return distance < 50 ? { name: 'Weak', class: 'weak' } : { name: 'Hero', class: 'hero' };
+            } else {
+                return distance < 50 ? { name: 'Pleasant', class: 'pleasant' } : { name: 'Epic', class: 'epic' };
+            }
+        }
+
+        function renderSparklines() {
+            const container = document.getElementById('sparklineContainer');
+            container.innerHTML = '';
+
+            currentMatches.forEach((match, idx) => {
+                const item = document.createElement('div');
+                item.className = 'sparkline-item' + (idx === 0 ? ' selected' : '');
+                item.onclick = () => selectMatch(idx);
+
+                const svg = createSparkline(match);
+                const category = categorizeDay(match.num_pilots, match.max_distance);
+
+                item.appendChild(svg);
+                item.innerHTML += `
+                    <div class="sparkline-date">${match.date}</div>
+                    <div class="sparkline-meta">${category.name}</div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function createSparkline(match) {
+            const width = 90, height = 50;
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('width', width);
+            svg.setAttribute('height', height);
+            svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+            if (match.sounding) {
+                const { temperature: temps, dewpoint: dews, pressure: pressures } = match.sounding;
+                const pMin = Math.min(...pressures), pMax = Math.max(...pressures);
+                const tMin = Math.min(...temps, ...dews), tMax = Math.max(...temps, ...dews);
+
+                const xScale = t => ((t - tMin) / (tMax - tMin || 1)) * (width - 10) + 5;
+                const yScale = p => ((Math.log(p) - Math.log(pMax)) / (Math.log(pMin) - Math.log(pMax) || 1)) * (height - 6) + 3;
+
+                // Temperature line
+                let tempPath = 'M' + temps.map((t, i) => `${xScale(t)},${yScale(pressures[i])}`).join('L');
+                const tempLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                tempLine.setAttribute('d', tempPath);
+                tempLine.setAttribute('stroke', '#e74c3c');
+                tempLine.setAttribute('stroke-width', '2');
+                tempLine.setAttribute('fill', 'none');
+                svg.appendChild(tempLine);
+
+                // Dewpoint line
+                let dewPath = 'M' + dews.map((d, i) => `${xScale(d)},${yScale(pressures[i])}`).join('L');
+                const dewLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                dewLine.setAttribute('d', dewPath);
+                dewLine.setAttribute('stroke', '#27ae60');
+                dewLine.setAttribute('stroke-width', '2');
+                dewLine.setAttribute('fill', 'none');
+                svg.appendChild(dewLine);
+            }
+            return svg;
+        }
+
+        function selectMatch(idx) {
+            document.querySelectorAll('.sparkline-item').forEach((item, i) => {
+                item.classList.toggle('selected', i === idx);
+            });
+
+            const match = currentMatches[idx];
+            const loading = document.getElementById('skewt-loading');
+            const img = document.getElementById('skewt-image');
+
+            loading.textContent = 'Generating comparison...';
+            loading.style.display = 'block';
+            img.style.display = 'none';
+
+            fetch(`/api/comparison/${currentTarget}/${match.date}`)
+                .then(r => r.json())
+                .then(data => {
+                    img.src = 'data:image/png;base64,' + data.image;
+                    img.style.display = 'block';
+                    loading.style.display = 'none';
+                    renderScatterPlot(scatterData, match.date);
+                });
+        }
+
+        function renderScatterPlot(data, highlightDate) {
+            // Filter to current month if a target is selected
+            let filteredData = data;
+            if (currentTarget) {
+                let targetMonth, targetYear;
+                if (currentTarget === 'forecast') {
+                    // For forecast, use current month but show 2024 data
+                    const now = new Date();
+                    targetMonth = now.getMonth();
+                    targetYear = 2024;
+                } else {
+                    const targetDate = new Date(currentTarget);
+                    targetMonth = targetDate.getMonth();
+                    targetYear = targetDate.getFullYear();
+                }
+                filteredData = data.filter(d => {
+                    const date = new Date(d.date);
+                    return date.getMonth() === targetMonth && date.getFullYear() === targetYear;
+                });
+                
+                // Always include highlighted date even if outside current month
+                if (highlightDate && !filteredData.some(d => d.date === highlightDate)) {
+                    const highlightedPoint = data.find(d => d.date === highlightDate);
+                    if (highlightedPoint) {
+                        filteredData.push(highlightedPoint);
+                    }
+                }
+            }
+
+            const maxX = Math.max(...filteredData.map(d => d.max_distance), 100);
+            const maxY = Math.max(...filteredData.map(d => d.num_pilots), 20);
+
+            // Quadrant rectangles
+            const shapes = [
+                { x0: 0, y0: 0, x1: 50, y1: 5, fillcolor: categoryColors.weak, opacity: 0.15 },
+                { x0: 50, y0: 0, x1: maxX, y1: 5, fillcolor: categoryColors.hero, opacity: 0.15 },
+                { x0: 0, y0: 5, x1: 50, y1: maxY, fillcolor: categoryColors.pleasant, opacity: 0.15 },
+                { x0: 50, y0: 5, x1: maxX, y1: maxY, fillcolor: categoryColors.epic, opacity: 0.15 }
+            ].map(s => ({ type: 'rect', xref: 'x', yref: 'y', layer: 'below', line: { width: 0 }, ...s }));
+
+            // Quadrant labels
+            const annotations = [
+                { x: 25, y: 2.5, text: 'Weak', color: categoryColors.weak },
+                { x: Math.min(75, maxX * 0.6), y: 2.5, text: 'Hero', color: categoryColors.hero },
+                { x: 25, y: Math.min(12, maxY * 0.4), text: 'Pleasant', color: categoryColors.pleasant },
+                { x: Math.min(75, maxX * 0.6), y: Math.min(12, maxY * 0.4), text: 'Epic', color: categoryColors.epic }
+            ].map(a => ({ showarrow: false, font: { size: 14, color: a.color }, opacity: 0.6, ...a }));
+
+            // Split data into highlighted and non-highlighted
+            const highlighted = filteredData.filter(d => d.date === highlightDate);
+            const nonHighlighted = filteredData.filter(d => d.date !== highlightDate);
+
+            const traces = [
+                {
+                    x: nonHighlighted.map(d => d.max_distance),
+                    y: nonHighlighted.map(d => d.num_pilots),
+                    text: nonHighlighted.map(d => `${d.date}<br>Pilots: ${d.num_pilots}<br>Max: ${d.max_distance.toFixed(1)} km`),
+                    mode: 'markers',
+                    type: 'scatter',
+                    marker: {
+                        size: 8,
+                        color: nonHighlighted.map(d => {
+                            const cat = categorizeDay(d.num_pilots, d.max_distance);
+                            return categoryColors[cat.class];
+                        }),
+                        opacity: 0.6
+                    },
+                    hoverinfo: 'text',
+                    name: ''
+                }
+            ];
+
+            if (highlighted.length > 0) {
+                traces.push({
+                    x: highlighted.map(d => d.max_distance),
+                    y: highlighted.map(d => d.num_pilots),
+                    text: highlighted.map(d => `${d.date}<br>Pilots: ${d.num_pilots}<br>Max: ${d.max_distance.toFixed(1)} km`),
+                    mode: 'markers',
+                    type: 'scatter',
+                    marker: {
+                        size: 16,
+                        color: highlighted.map(d => {
+                            const cat = categorizeDay(d.num_pilots, d.max_distance);
+                            return categoryColors[cat.class];
+                        }),
+                        opacity: 1,
+                        line: { color: 'white', width: 2 }
+                    },
+                    hoverinfo: 'text',
+                    name: 'Selected'
+                });
+            }
+
+            const layout = {
+                xaxis: { title: 'Longest Flight Distance (km)', range: [0, maxX * 1.1] },
+                yaxis: { title: 'Number of Pilots', range: [0, maxY * 1.1] },
+                shapes: shapes,
+                annotations: annotations,
+                showlegend: false,
+                margin: { t: 20, r: 20, b: 50, l: 60 }
+            };
+
+            Plotly.newPlot('scatter-container', traces, layout, { responsive: true });
+        }
+    </script>
+</body>
+</html>
